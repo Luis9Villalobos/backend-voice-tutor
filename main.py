@@ -78,17 +78,19 @@ async def chat_with_ai(request: ChatRequest):
         for msg in request.messages:
             conversation_payload.append({"role": msg.role, "content": msg.content})
 
+        # Usamos llama-3.1-8b-instant (ultra rápido, ideal para tutor de voz)
         chat_completion = client.chat.completions.create(
             messages=conversation_payload,
-            model="openai/gpt-oss-20b",
+            model="llama-3.1-8b-instant",
             temperature=0.7,
             max_tokens=250,
         )
 
         ai_response = chat_completion.choices[0].message.content
 
+        # Fallback en caso de respuesta nula
         if not ai_response:
-            raise HTTPException(status_code=500, detail="La IA devolvió una respuesta vacía.")
+            ai_response = "I'm sorry, I couldn't process that. Could you please repeat?"
         
         return {"response": ai_response}
 
