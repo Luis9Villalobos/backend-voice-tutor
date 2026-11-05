@@ -1,4 +1,5 @@
 import os
+from typing import List
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,9 +42,15 @@ SYSTEM_PROMPTS = {
     """
 }
 
+# 1. Estructura para cada mensaje individual
+class Message(BaseModel):
+    role: str      # "user" o "assistant"
+    content: str   # Contenido del mensaje
+
+# 2. Estructura del cuerpo de la petición con soporte para historial
 class ChatRequest(BaseModel):
     mode: str
-    user_message: str
+    messages: List[Message]
 
 @app.get("/")
 def read_root():
@@ -63,12 +70,17 @@ async def chat_with_ai(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Modo no válido. Usa 'teacher' o 'interviewer'.")
 
     try:
+        # Construcción del payload: System Prompt + Historial
+        conversation_payload = [
+            {"role": "system", "content": SYSTEM_PROMPTS[request.mode]}
+        ]
+        
+        for msg in request.messages:
+            conversation_payload.append({"role": msg.role, "content": msg.content})
+
         chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPTS[request.mode]},
-                {"role": "user", "content": request.user_message}
-            ],
-            model="openai/gpt-oss-120b",
+            messages=conversation_payload,
+            model="openai/gpt-oss-20b",
             temperature=0.7,
             max_tokens=250,
         )
