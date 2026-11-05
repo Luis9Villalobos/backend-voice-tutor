@@ -42,12 +42,10 @@ SYSTEM_PROMPTS = {
     """
 }
 
-# 1. Estructura para cada mensaje individual
 class Message(BaseModel):
     role: str      # "user" o "assistant"
     content: str   # Contenido del mensaje
 
-# 2. Estructura del cuerpo de la petición con soporte para historial
 class ChatRequest(BaseModel):
     mode: str
     messages: List[Message]
@@ -70,7 +68,7 @@ async def chat_with_ai(request: ChatRequest):
         raise HTTPException(status_code=400, detail="Modo no válido. Usa 'teacher' o 'interviewer'.")
 
     try:
-        # Construcción del payload: System Prompt + Historial
+        # Construimos el array de mensajes respetando la estructura de Groq
         conversation_payload = [
             {"role": "system", "content": SYSTEM_PROMPTS[request.mode]}
         ]
@@ -78,20 +76,18 @@ async def chat_with_ai(request: ChatRequest):
         for msg in request.messages:
             conversation_payload.append({"role": msg.role, "content": msg.content})
 
-        # Usamos llama-3.1-8b-instant (ultra rápido, ideal para tutor de voz)
         chat_completion = client.chat.completions.create(
             messages=conversation_payload,
-            model="llama-3.1-8b-instant",
+            model="openai/gpt-oss-20b",
             temperature=0.7,
             max_tokens=250,
         )
 
         ai_response = chat_completion.choices[0].message.content
 
-        # Fallback en caso de respuesta nula
         if not ai_response:
             ai_response = "I'm sorry, I couldn't process that. Could you please repeat?"
-        
+
         return {"response": ai_response}
 
     except Exception as e:
