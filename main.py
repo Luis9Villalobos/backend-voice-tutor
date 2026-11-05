@@ -1,14 +1,15 @@
 import os
-from typing import List
-from fastapi import FastAPI, HTTPException
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
+from supabase import create_client, Client
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="AI Voice Tutor BFF API")
+app = FastAPI(title="AI Voice Tutor BFF API (Secured)")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,7 +19,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Clientes de API
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+supabase: Client = create_client(supabase_url, supabase_key)
 
 SYSTEM_PROMPTS = {
     "teacher": """
@@ -43,40 +49,63 @@ SYSTEM_PROMPTS = {
 }
 
 class Message(BaseModel):
-    role: str      # "user" o "assistant"
-    content: str   # Contenido del mensaje
+    role: str
+    content: str
 
 class ChatRequest(BaseModel):
     mode: str
     messages: List[Message]
 
+# Middleware/Dependencia para validar el token de usuario
+async def get_current_user(authorization: Optional[str] = Header(None)):
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Falta el encabezado Authorization")
+    
+    token = authorization.replace("Bearer ", "").strip()
+    
+    try:
+        # Validar el token con Supabase Auth
+        user_response = supabase.auth.get_user(token)
+        if not user_response or not user_response.user:
+            raise HTTPException(status_code=401, detail="Token inválido o expirado")
+        return user_response.user
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=f"Error de autenticación: {str(e)}")
+
 @app.get("/")
 def read_root():
-    return {"status": "ok", "message": "AI Voice Tutor API corriendo correctamente"}
-
-@app.get("/api/models")
-def get_available_models():
-    try:
-        models = client.models.list()
-        return {"models": [m.id for m in models.data]}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "ok", "message": "AI Voice Tutor API activa con seguridad Supabase"}
 
 @app.post("/api/chat")
-async def chat_with_ai(request: ChatRequest):
+async def chat_with_ai(request: ChatRequest, user: dict = Depends(get_current_user)):
     if request.mode not in SYSTEM_PROMPTS:
         raise HTTPException(status_code=400, detail="Modo no válido. Usa 'teacher' o 'interviewer'.")
 
+    user_id = user.id
+
+    # 1. Verificar créditos del usuario en la base de datos
+    profile_res = supabase.table("profiles").select("credits_seconds").eq("id", user_id).single().execute()
+    
+    if not profile_res.data:
+        raise HTTPException(status_code=404, detail="Perfil de usuario no encontrado")
+        
+    current_credits = profile_res.data.get("credits_seconds", 0)
+    
+    if current_credits <= 0:
+        raise HTTPException(status_code=402, detail="No tienes créditos suficientes. Por favor recarga tu saldo.")
+
     try:
-        # Construimos el array de mensajes respetando la estructura de Groq
+        # 2. Construir payload para Groq
         conversation_payload = [
             {"role": "system", "content": SYSTEM_PROMPTS[request.mode]}
         ]
         
-        for msg in request.messages:
+        # Limitar historial a los últimos 6 mensajes para no saturar el prompt
+        for msg in request.messages[-6:]:
             conversation_payload.append({"role": msg.role, "content": msg.content})
 
-        chat_completion = client.chat.completions.create(
+        # 3. Llamada a Groq
+        chat_completion = groq_client.chat.completions.create(
             messages=conversation_payload,
             model="openai/gpt-oss-20b",
             temperature=0.7,
@@ -88,7 +117,16 @@ async def chat_with_ai(request: ChatRequest):
         if not ai_response:
             ai_response = "I'm sorry, I couldn't process that. Could you please repeat?"
 
-        return {"response": ai_response}
+        # 4. Descontar créditos (ejemplo: 10 segundos de voz por turno)
+        seconds_to_deduct = 10
+        new_credits = max(0, current_credits - seconds_to_deduct)
+        
+        supabase.table("profiles").update({"credits_seconds": new_credits}).eq("id", user_id).execute()
+
+        return {
+            "response": ai_response,
+            "remaining_credits_seconds": new_credits
+        }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
