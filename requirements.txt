@@ -1,6 +1,6 @@
 fastapi
-uvicorn
+uvicorn[standard]
 groq
+supabase
 python-dotenv
 pydantic
-supabase

@@ -1,5 +1,6 @@
 import os
 from typing import List, Optional
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -9,11 +10,26 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="AI Voice Tutor BFF API (Secured)")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Fail-fast: validar variables de entorno al arrancar
+    required_vars = ["GROQ_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+    missing = [v for v in required_vars if not os.getenv(v)]
+    if missing:
+        raise RuntimeError(f"Faltan variables de entorno requeridas: {', '.join(missing)}")
+    yield
+
+app = FastAPI(title="AI Voice Tutor BFF API (Secured)", lifespan=lifespan)
+
+origins = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,6 +91,10 @@ async def get_current_user(authorization: Optional[str] = Header(None)):
 @app.get("/")
 def read_root():
     return {"status": "ok", "message": "AI Voice Tutor API activa con seguridad Supabase"}
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "ai-voice-tutor-api"}
 
 @app.post("/api/chat")
 async def chat_with_ai(request: ChatRequest, user: dict = Depends(get_current_user)):
