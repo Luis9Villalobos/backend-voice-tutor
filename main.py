@@ -5,18 +5,28 @@ from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from groq import Groq
-from supabase import create_client, Client
+from supabase import create_client
 from dotenv import load_dotenv
 
 load_dotenv()
 
+groq_client = None
+supabase = None
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Fail-fast: validar variables de entorno al arrancar
+    global groq_client, supabase
+
     required_vars = ["GROQ_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
     missing = [v for v in required_vars if not os.getenv(v)]
     if missing:
         raise RuntimeError(f"Faltan variables de entorno requeridas: {', '.join(missing)}")
+
+    # Clientes inicializados despues de validar el entorno
+    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_SERVICE_ROLE_KEY"))
+
     yield
 
 app = FastAPI(title="AI Voice Tutor BFF API (Secured)", lifespan=lifespan)
@@ -34,13 +44,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Clientes de API
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-
-supabase_url = os.getenv("SUPABASE_URL")
-supabase_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-supabase: Client = create_client(supabase_url, supabase_key)
 
 SYSTEM_PROMPTS = {
     "teacher": """
